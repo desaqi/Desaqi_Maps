@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Avenza Web Clone - GeoPDF Reader</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+    
+    <!-- Font Awesome untuk Ikon UI -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- CSS kustom -->
+    <style>
+        body { margin: 0; padding: 0; overscroll-behavior-y: none; }
+        #map { height: 100vh; width: 100vw; z-index: 10; }
+        .leaflet-control-attribution { display: none !important; }
+        .leaflet-top.leaflet-right { top: 76px !important; right: 12px !important; }
+        
+        .loader {
+            border: 4px solid rgba(255, 255, 255, 0.2);
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 44px;
+            height: 44px;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-slate-900 font-sans overflow-hidden text-slate-800 select-none">
+
+    <div id="map" class="absolute inset-0 transition-colors duration-500"></div>
+
+    <!-- Crosshair Tengah Layar -->
+    <div class="absolute inset-0 z-20 pointer-events-none flex items-center justify-center">
+        <div class="relative flex items-center justify-center">
+            <div class="absolute w-8 h-[1.5px] bg-slate-900/80 drop-shadow-md rounded-full"></div>
+            <div class="absolute w-[1.5px] h-8 bg-slate-900/80 drop-shadow-md rounded-full"></div>
+            <div class="absolute w-12 h-12 border-2 border-slate-900/40 rounded-full"></div>
+            <div class="absolute w-1.5 h-1.5 bg-red-500 rounded-full shadow-sm border border-white"></div>
+        </div>
+    </div>
+
+    <!-- Panel Informasi Koordinat Atas -->
+    <div class="absolute top-4 left-0 right-0 z-30 flex justify-center pointer-events-none px-4">
+        <div class="pointer-events-auto bg-white/95 backdrop-blur-xl shadow-2xl rounded-2xl p-3 w-full max-w-md border border-slate-100/80 flex flex-col items-center">
+            <div class="flex items-center justify-between w-full px-1 mb-1">
+                <span class="text-[10px] font-bold text-slate-500 tracking-wider uppercase flex items-center gap-1.5">
+                    <i class="fas fa-crosshairs text-blue-500"></i> Titik Pusat
+                </span>
+                <span id="geopdf-badge" class="hidden text-[10px] font-bold px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full flex items-center gap-1 shadow-sm">
+                    <i class="fas fa-check-circle text-[10px]"></i> PDF Presisi Aktif
+                </span>
+            </div>
+            <div class="flex items-center gap-5 font-mono text-sm font-extrabold text-slate-800 mt-1">
+                <div class="flex flex-col items-center bg-slate-50 px-3 py-1 rounded-lg border border-slate-100 min-w-[120px]">
+                    <span class="text-[9px] text-slate-400 font-sans tracking-wide">LATITUDE</span>
+                    <span id="lat-display" class="text-blue-700">-0.000000</span>
+                </div>
+                <div class="flex flex-col items-center bg-slate-50 px-3 py-1 rounded-lg border border-slate-100 min-w-[120px]">
+                    <span class="text-[9px] text-slate-400 font-sans tracking-wide">LONGITUDE</span>
+                    <span id="lng-display" class="text-blue-700">0.000000</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tombol Floating Bawah -->
+    <div class="absolute bottom-6 left-0 right-0 z-30 flex justify-center pointer-events-none px-4">
+        <div class="pointer-events-auto flex items-end justify-between w-full max-w-md">
+            
+            <div class="flex-1"></div>
+
+            <div class="flex flex-col gap-3 ml-auto">
+                <button id="close-pdf-btn" onclick="closeIsolatedPdf()" class="hidden w-12 h-12 bg-red-500 text-white rounded-2xl shadow-xl flex items-center justify-center text-lg hover:bg-red-600 active:scale-95 transition-all" title="Tutup PDF">
+                    <i class="fas fa-sign-out-alt"></i>
+                </button>
+                <button onclick="addPinAtCenter()" class="w-12 h-12 bg-white text-emerald-600 rounded-2xl shadow-xl flex items-center justify-center text-lg hover:bg-slate-50 active:scale-95 transition-all border border-slate-100" title="Simpan Titik Pin">
+                    <i class="fas fa-map-pin"></i>
+                </button>
+                <button id="gps-btn" onclick="toggleGpsLock()" class="w-12 h-12 bg-white text-slate-600 rounded-2xl shadow-xl flex items-center justify-center text-lg hover:bg-slate-50 active:scale-95 transition-all border border-slate-100" title="Toggle Kunci Lokasi">
+                    <i class="fas fa-location-crosshairs"></i>
+                </button>
+                <button onclick="document.getElementById('file-upload').click()" class="w-14 h-14 bg-indigo-600 text-white rounded-2xl shadow-xl shadow-indigo-600/40 flex items-center justify-center text-xl hover:bg-indigo-700 active:scale-95 transition-all" title="Buka GeoPDF">
+                    <i class="fas fa-folder-open"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <input type="file" id="file-upload" accept=".pdf, image/*" class="hidden">
+
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed top-24 left-1/2 transform -translate-x-1/2 z-50 hidden transition-all duration-300 w-[90%] max-w-sm pointer-events-none">
+        <div id="toast-body" class="bg-slate-800 text-white px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border border-slate-700">
+            <i id="toast-icon" class="fas fa-info-circle text-blue-400 text-lg"></i>
+            <span id="toast-msg" class="text-xs font-medium leading-relaxed">Notifikasi sistem</span>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="absolute inset-0 bg-slate-950/70 backdrop-blur-md z-50 hidden flex-col items-center justify-center text-white px-6 text-center">
+        <div class="loader mb-4"></div>
+        <h2 id="loading-title" class="text-base font-bold tracking-wide">Memproses Peta...</h2>
+        <p id="loading-desc" class="text-xs text-slate-300 mt-1 max-w-xs">Menyesuaikan Rasio & Mengekstrak Metadata</p>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js"></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDco0bw8r3JBaFHka-__rkPtZ2RHQPdbDs&v=weekly"></script>
+    <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@0.13.5/dist/Leaflet.GoogleMutant.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        // Proyeksi WGS84 & Web Mercator
+        proj4.defs("EPSG:4326", "+proj=longlat +datum=WGS84 +no_defs");
+        proj4.defs("EPSG:3857", "+proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +wktext +no_defs");
+        
+        // Generate Proyeksi UTM Zone Indonesia (46-54 South & North)
+        for (let z = 46; z <= 54; z++) {
+            proj4.defs(`EPSG:${32700 + z}`, `+proj=utm +zone=${z} +south +datum=WGS84 +units=m +no_defs`);
+            proj4.defs(`EPSG:${32600 + z}`, `+proj=utm +zone=${z} +datum=WGS84 +units=m +no_defs`);
+        }
+
+        const map = L.map('map', { zoomControl: false }).setView([-8.71, 116.13], 12);
+        const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 });
+
+        window.gm_authFailure = function() {
+            showToast("Google Maps API Gagal. Beralih ke OSM.", "warning");
+            map.eachLayer(layer => { if (layer instanceof L.GridLayer.GoogleMutant) map.removeLayer(layer); });
+            osmLayer.addTo(map);
+        };
+
+        const googleSatellite = L.gridLayer.googleMutant({ type: 'satellite' }).addTo(map);
+        const googleRoadmap = L.gridLayer.googleMutant({ type: 'roadmap' });
+        L.control.layers({ "Satelit": googleSatellite, "Jalan": googleRoadmap, "OSM": osmLayer }, null, { position: 'topright' }).addTo(map);
+
+        let userMarker = null, userCircle = null, customMapLayer = null;
+        window.activePdfTransform = null; 
+        window.activePdfEpsg = null;
+        window.lastRealGps = null; 
+        window.proxyScale = 0.00001; // SKALA RAHASIA: Mencegah gambar Gepeng dengan memproyeksikannya di area khatulistiwa yang 1:1 datar
+
+        const latDisplay = document.getElementById('lat-display');
+        const lngDisplay = document.getElementById('lng-display');
+        
+        map.on('move', () => {
+            const center = map.getCenter();
+            if (window.activePdfTransform) {
+                // Konversi proxy koordinat khatulistiwa kembali ke X dan Y (Piksel) PDF
+                let px = center.lng / window.proxyScale;
+                let py = -center.lat / window.proxyScale;
+                
+                let t = window.activePdfTransform;
+                
+                // 1. Matrix mengubah Piksel ke Unit Datar Asli PDF (Meter UTM)
+                let v1 = t.A1 * px + t.B1 * py + t.C1;
+                let v2 = t.A2 * px + t.B2 * py + t.C2;
+                
+                let x = t.v1_is_x ? v1 : v2;
+                let y = t.v1_is_x ? v2 : v1;
+                
+                let lat, lng;
+                // 2. Barulah Meter UTM dikonversi ke Lengkungan Bumi (Latitude/Longitude)
+                if (window.activePdfEpsg && proj4.defs[`EPSG:${window.activePdfEpsg}`]) {
+                    let p = proj4(`EPSG:${window.activePdfEpsg}`, 'EPSG:4326', [x, y]);
+                    lat = p[1];
+                    lng = p[0];
+                } else {
+                    lat = y;
+                    lng = x;
+                }
+                
+                latDisplay.innerText = lat.toFixed(6);
+                lngDisplay.innerText = lng.toFixed(6);
+            } else {
+                latDisplay.innerText = center.lat.toFixed(6);
+                lngDisplay.innerText = center.lng.toFixed(6);
+            }
+        });
+        map.fire('move');
+
+        function showToast(message, type = "info") {
+            const toast = document.getElementById('toast'), msg = document.getElementById('toast-msg'), icon = document.getElementById('toast-icon');
+            msg.innerText = message;
+            icon.className = type === "success" ? "fas fa-check-circle text-emerald-400 text-lg" : (type === "warning" ? "fas fa-exclamation-triangle text-amber-400 text-lg" : "fas fa-info-circle text-blue-400 text-lg");
+            toast.classList.remove('hidden');
+            setTimeout(() => toast.classList.add('hidden'), 4000);
+        }
+
+        let isGpsLocked = true; // Langsung Kunci GPS saat awal aplikasi dimuat!
+        
+        function toggleGpsLock() {
+            const btn = document.getElementById('gps-btn');
+            isGpsLocked = !isGpsLocked;
+            
+            if (isGpsLocked) {
+                btn.className = "w-12 h-12 bg-blue-600 text-white rounded-2xl shadow-xl shadow-blue-600/30 flex items-center justify-center text-lg hover:bg-blue-700 active:scale-95 transition-all";
+                showToast("GPS Terkunci: Layar Mengikuti Lokasi Anda", "success");
+                if(window.lastRealGps) updateGpsMarkerVisuals(true);
+            } else {
+                btn.className = "w-12 h-12 bg-white text-slate-600 rounded-2xl shadow-xl flex items-center justify-center text-lg hover:bg-slate-50 active:scale-95 transition-all border border-slate-100";
+                showToast("GPS Dilepas: Anda bebas menggeser Peta", "info");
+            }
+        }
+        
+        // Aktifkan tampilan tombol aktif di awal
+        document.getElementById('gps-btn').className = "w-12 h-12 bg-blue-600 text-white rounded-2xl shadow-xl shadow-blue-600/30 flex items-center justify-center text-lg hover:bg-blue-700 active:scale-95 transition-all";
+
+        map.locate({setView: false, watch: true, enableHighAccuracy: true});
+
+        map.on('locationfound', (e) => {
+            window.lastRealGps = e.latlng;
+            updateGpsMarkerVisuals(isGpsLocked); // Hanya kunci layar jika isGpsLocked = true
+        });
+
+        function updateGpsMarkerVisuals(shouldSetView = false) {
+            if (!window.lastRealGps) return;
+            let displayLatLng = window.lastRealGps;
+            
+            // JIKA PDF TERBUKA: Konversi Koordinat Bumi Nyata menjadi Piksel (XY) di Kertas PDF
+            if (window.activePdfTransform) {
+                let t = window.activePdfTransform;
+                let real = window.lastRealGps;
+                
+                let x, y;
+                if (window.activePdfEpsg && proj4.defs[`EPSG:${window.activePdfEpsg}`]) {
+                    let p = proj4('EPSG:4326', `EPSG:${window.activePdfEpsg}`, [real.lng, real.lat]);
+                    x = p[0]; y = p[1];
+                } else {
+                    x = real.lng; y = real.lat;
+                }
+                
+                let v1 = t.v1_is_x ? x : y;
+                let v2 = t.v1_is_x ? y : x;
+
+                let detM = t.A1 * t.B2 - t.B1 * t.A2;
+                
+                if (Math.abs(detM) > 1e-10) {
+                    // Rumus Cramer Inverse Matrix untuk merubah Unit Datar UTM kembali ke Piksel (X, Y)
+                    let px = ((v1 - t.C1) * t.B2 - t.B1 * (v2 - t.C2)) / detM;
+                    let py = (t.A1 * (v2 - t.C2) - (v1 - t.C1) * t.A2) / detM;
+                    
+                    // Simpan ke proxy khatulistiwa agar bebas distorsi
+                    displayLatLng = L.latLng(-py * window.proxyScale, px * window.proxyScale);
+                }
+            }
+
+            if (userMarker) { 
+                userMarker.setLatLng(displayLatLng); 
+                userCircle.setLatLng(displayLatLng);
+            } else {
+                userMarker = L.marker(displayLatLng).addTo(map);
+                userCircle = L.circle(displayLatLng, { radius: 20, color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.2 }).addTo(map);
+            }
+            
+            if (shouldSetView) {
+                map.setView(displayLatLng);
+                map.fire('move'); // Paksa update text label atas
+            }
+        }
+
+        map.on('locationerror', () => {
+            if(isGpsLocked) showToast("Gagal membaca GPS Device", "warning");
+        });
+
+        function addPinAtCenter() {
+            let lat = parseFloat(latDisplay.innerText);
+            let lng = parseFloat(lngDisplay.innerText);
+            const center = map.getCenter();
+            L.marker(center).addTo(map).bindPopup(`<div class="text-xs font-bold text-center">Pin Disimpan<br>${lat.toFixed(5)}, ${lng.toFixed(5)}</div>`).openPopup();
+            showToast("Pin ditambahkan", "success");
+        }
+
+        function parseGeoPDFMetadata(arrayBuffer) {
+            const pdfText = new TextDecoder('latin1').decode(arrayBuffer);
+            let result = { isGeoPDF: false, gpts: [], lpts: [], epsg: null };
+
+            let epsgMatch = pdfText.match(/EPSG["',\s]+(\d{4,5})/i);
+            if (epsgMatch) {
+                result.epsg = parseInt(epsgMatch[1], 10);
+            } else {
+                // Fallback pencarian UTM Zone dalam text WKT TerraGo / QGIS
+                let utmMatch = pdfText.match(/UTM zone (\d{1,2})([NnSs]?)/i);
+                if (utmMatch) {
+                    let zone = parseInt(utmMatch[1], 10);
+                    let isSouth = utmMatch[2].toUpperCase() === 'S';
+                    result.epsg = (isSouth ? 32700 : 32600) + zone;
+                }
+            }
+
+            let gptsMatch = pdfText.match(/\/GPTS\s*\[(.*?)\]/s);
+            if (gptsMatch) {
+                result.gpts = gptsMatch[1].replace(/[\[\]]/g, ' ').replace(/[^\d\.\-\+eE\s]/g, '').trim().split(/\s+/).map(Number).filter(n => !isNaN(n));
+                result.isGeoPDF = true;
+            }
+
+            let lptsMatch = pdfText.match(/\/LPTS\s*\[(.*?)\]/s);
+            if (lptsMatch) {
+                result.lpts = lptsMatch[1].replace(/[\[\]]/g, ' ').replace(/[^\d\.\-\+eE\s]/g, '').trim().split(/\s+/).map(Number).filter(n => !isNaN(n));
+            }
+
+            return result;
+        }
+
+        function extractTransform(meta, viewport) {
+            let { gpts, lpts, epsg } = meta;
+            if (!gpts || gpts.length < 6 || !lpts || lpts.length < 6) return null;
+
+            // Deteksi otomatis urutan Koordinat (Apakah [Easting, Northing] atau [Northing, Easting])
+            let v1_is_x = false;
+            let test_v1 = gpts[0], test_v2 = gpts[1];
+            if (epsg && proj4.defs[`EPSG:${epsg}`]) {
+                try {
+                    let p1 = proj4(`EPSG:${epsg}`, 'EPSG:4326', [test_v2, test_v1]);
+                    let p2 = proj4(`EPSG:${epsg}`, 'EPSG:4326', [test_v1, test_v2]);
+                    let p1_valid = Math.abs(p1[1]) <= 90 && Math.abs(p1[0]) <= 180;
+                    let p2_valid = Math.abs(p2[1]) <= 90 && Math.abs(p2[0]) <= 180;
+                    if (p2_valid && !p1_valid) v1_is_x = true;
+                } catch(e) {}
+            } else {
+                if (Math.abs(test_v2) <= 90 && Math.abs(test_v1) > 90) v1_is_x = true;
+            }
+
+            let points = [];
+            let numPoints = Math.min(Math.floor(gpts.length / 2), Math.floor(lpts.length / 2));
+            let isNormalized = lpts.every(v => v >= 0 && v <= 1.01);
+
+            for (let i = 0; i < numPoints; i++) {
+                let v1 = gpts[i * 2]; 
+                let v2 = gpts[i * 2 + 1];
+                let lx = lpts[i * 2], ly = lpts[i * 2 + 1];
+
+                if (isNormalized) {
+                    let vx = viewport.viewBox[0], vy = viewport.viewBox[1];
+                    let vw = viewport.viewBox[2] - vx, vh = viewport.viewBox[3] - vy;
+                    lx = vx + lx * vw; ly = vy + ly * vh;
+                }
+                
+                let pt = viewport.convertToViewportPoint(lx, ly);
+                points.push({ x: pt[0], y: pt[1], v1: v1, v2: v2 });
+            }
+
+            let best = null, maxArea = 0;
+            for(let i=0; i<points.length-2; i++) {
+                for(let j=i+1; j<points.length-1; j++) {
+                    for(let k=j+1; k<points.length; k++) {
+                        let p1 = points[i], p2 = points[j], p3 = points[k];
+                        let area = Math.abs(p1.x*(p2.y-p3.y) + p2.x*(p3.y-p1.y) + p3.x*(p1.y-p2.y));
+                        if (area > maxArea) { maxArea = area; best = [p1, p2, p3]; }
+                    }
+                }
+            }
+
+            if (!best || maxArea < 10) return null;
+            let [p1, p2, p3] = best;
+            let det = p1.x * (p2.y - p3.y) - p1.y * (p2.x - p3.x) + (p2.x * p3.y - p3.x * p2.y);
+            if (Math.abs(det) < 1e-5) return null;
+
+            // Matrix Affine Sumbu 1
+            let A1 = (p1.v1 * (p2.y - p3.y) - p1.y * (p2.v1 - p3.v1) + (p2.v1 * p3.y - p3.v1 * p2.y)) / det;
+            let B1 = (p1.x * (p2.v1 - p3.v1) - p1.v1 * (p2.x - p3.x) + (p2.x * p3.v1 - p3.x * p2.v1)) / det;
+            let C1 = (p1.x * (p2.y * p3.v1 - p3.y * p2.v1) - p1.y * (p2.x * p3.v1 - p3.x * p2.v1) + p1.v1 * (p2.x * p3.y - p3.x * p2.y)) / det;
+
+            // Matrix Affine Sumbu 2
+            let A2 = (p1.v2 * (p2.y - p3.y) - p1.y * (p2.v2 - p3.v2) + (p2.v2 * p3.y - p3.v2 * p2.y)) / det;
+            let B2 = (p1.x * (p2.v2 - p3.v2) - p1.v2 * (p2.x - p3.x) + (p2.x * p3.v2 - p3.x * p2.v2)) / det;
+            let C2 = (p1.x * (p2.y * p3.v2 - p3.y * p2.v2) - p1.y * (p2.x * p3.v2 - p3.x * p2.v2) + p1.v2 * (p2.x * p3.y - p3.x * p2.y)) / det;
+
+            return { A1, B1, C1, A2, B2, C2, v1_is_x };
+        }
+
+        document.getElementById('file-upload').addEventListener('change', async function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            document.getElementById('loading-overlay').style.display = 'flex';
+
+            try {
+                let imageUrl = '';
+                let geoMetadata = null;
+                let viewport = null;
+
+                if (file.type === 'application/pdf') {
+                    const arrayBuffer = await file.arrayBuffer();
+                    geoMetadata = parseGeoPDFMetadata(arrayBuffer);
+
+                    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+                    const page = await pdf.getPage(1);
+                    viewport = page.getViewport({ scale: 2.0 }); 
+
+                    const canvas = document.createElement('canvas');
+                    canvas.height = viewport.height; canvas.width = viewport.width;
+                    await page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise;
+                    imageUrl = canvas.toDataURL('image/png');
+                } else if (file.type.startsWith('image/')) {
+                    imageUrl = URL.createObjectURL(file);
+                    viewport = { width: 1000, height: 1000 };
+                }
+
+                overlayIsolatedPDF(imageUrl, geoMetadata, viewport);
+            } catch (error) {
+                console.error(error);
+                showToast("Gagal memproses file. Pastikan itu PDF.", "warning");
+            } finally {
+                document.getElementById('loading-overlay').style.display = 'none';
+                e.target.value = '';
+            }
+        });
+
+        function overlayIsolatedPDF(imageUrl, geoMetadata, viewport) {
+            if (customMapLayer) map.removeLayer(customMapLayer);
+
+            // Bersihkan Base Map
+            map.eachLayer(layer => { 
+                if (layer instanceof L.GridLayer.GoogleMutant || layer === osmLayer) map.removeLayer(layer);
+            });
+            document.getElementById('map').style.backgroundColor = '#0f172a'; // Background gelap
+
+            window.activePdfTransform = null;
+            window.activePdfEpsg = null;
+            
+            // TEKNIK RAHASIA: Proyeksikan Kanvas sekecil mungkin di dekat Garis Khatulistiwa (Lat 0)
+            // Area ini terbebas dari kelengkungan distorsi "Gepeng" Web Mercator.
+            // Aspect Ratio Peta Anda akan 100% Sempurna tanpa cacat.
+            let imageBounds = [
+                [0, 0], 
+                [-viewport.height * window.proxyScale, viewport.width * window.proxyScale]
+            ];
+
+            if (geoMetadata && geoMetadata.isGeoPDF) {
+                let transform = extractTransform(geoMetadata, viewport);
+                if (transform) {
+                    window.activePdfTransform = transform;
+                    window.activePdfEpsg = geoMetadata.epsg;
+                    document.getElementById('geopdf-badge').classList.remove('hidden');
+                    document.getElementById('geopdf-badge').classList.add('flex');
+                    showToast("Peta Terkalibrasi Sempurna!", "success");
+                } else {
+                    showToast("Tidak dapat membaca matrix koordinat.", "warning");
+                }
+            } else {
+                showToast("PDF dimuat sebagai Gambar Biasa", "info");
+            }
+
+            customMapLayer = L.imageOverlay(imageUrl, imageBounds, {
+                opacity: 1.0, 
+                interactive: true
+            }).addTo(map);
+
+            // Tampilkan UI Tutup PDF
+            document.getElementById('close-pdf-btn').classList.remove('hidden');
+            document.getElementById('close-pdf-btn').classList.add('flex');
+            
+            // Arahkan Kamera dan Tempatkan GPS di Koordinat Peta Baru
+            map.fitBounds(imageBounds);
+            updateGpsMarkerVisuals(true);
+        }
+
+        function closeIsolatedPdf() {
+            if (customMapLayer) { map.removeLayer(customMapLayer); customMapLayer = null; }
+            window.activePdfTransform = null;
+            window.activePdfEpsg = null;
+            
+            document.getElementById('map').style.backgroundColor = '';
+            document.getElementById('geopdf-badge').classList.add('hidden');
+            document.getElementById('geopdf-badge').classList.remove('flex');
+            document.getElementById('close-pdf-btn').classList.add('hidden');
+            document.getElementById('close-pdf-btn').classList.remove('flex');
+            
+            // Nyalakan ulang Google Maps
+            googleSatellite.addTo(map);
+            
+            // Kembalikan Posisi Anda di dunia nyata
+            updateGpsMarkerVisuals(true);
+            map.setZoom(16);
+            showToast("Kembali ke Live Maps", "info");
+        }
+    </script>
+</body>
+</html>
